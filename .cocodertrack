@@ -1,0 +1,8 @@
+**/*.js
+**/*.ts
+**/*.html
+**/*.css
+**/*.vue
+-
+**/node_modules/**
+.history/**
