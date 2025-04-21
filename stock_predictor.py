@@ -4,39 +4,46 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
 import os
-import numpy as np
-# Load all stock data
-#test
-data_dir = "/Users/milescai/PycharmProjects/stocknet-dataset/price/raw/"
+
+# ========= Load and Prepare Data ==========
+data_dir = "/Users/milescai/PycharmProjects/StockPredict/price/raw/"
 files = os.listdir(data_dir)
 
 all_data = []
 for file in files:
     if file.endswith('.csv'):
         df = pd.read_csv(os.path.join(data_dir, file))
-        df['Stock'] = file.split('.')[0]  # Add a column for stock symbol
+        df['Stock'] = file.split('.')[0]
         all_data.append(df)
 
-# Combine all data into one DataFrame
 combined_df = pd.concat(all_data, ignore_index=True)
-print(combined_df.columns)
 
-# Use the 'Close' price and calculate price movement
-prices = combined_df['Close'].values
-movement = (prices[1:] > prices[:-1]).astype(int)  # 1 if price increased, 0 if decreased
+# Use features: Open, High, Low, Close, Volume
+features = ['Open', 'High', 'Low', 'Close', 'Volume']
+future_days = [0, 3, 5]  # Predict day d, d+3, d+5
 
-# Use past 5 days as input (X) and movement as output (y)
 sequence_length = 5
 X = []
 y = []
-for i in range(len(prices) - sequence_length - 1):
-    X.append(prices[i:i+sequence_length])
-    y.append(movement[i+sequence_length])
+
+for i in range(len(combined_df) - sequence_length - max(future_days)):
+    sequence_data = combined_df[features].iloc[i:i+sequence_length].values
+    X.append(sequence_data)
+
+    # Predict movement for future_days
+    future_movements = []
+    for day in future_days:
+        close_now = combined_df['Close'].iloc[i + sequence_length + day - 1]
+        close_future = combined_df['Close'].iloc[i + sequence_length + day]
+        movement = (close_future > close_now).astype(int)
+        future_movements.append(movement)
+
+    y.append(future_movements)
 
 X = torch.stack([torch.tensor(x, dtype=torch.float32) for x in X])
-y = torch.tensor(y, dtype=torch.float32).view(-1, 1)
+y = torch.tensor(y, dtype=torch.float32)
 
-# Dataset & Dataloader
+# ========= Dataset & Dataloader ==========
 class PriceDataset(Dataset):
     def __init__(self, X, y):
         self.X = X
@@ -49,42 +56,41 @@ class PriceDataset(Dataset):
 dataset = PriceDataset(X, y)
 dataloader = DataLoader(dataset, batch_size=16, shuffle=True)
 
-# Model Definition for Binary Classification
+# ========= Model Definition ==========
 class PricePredictor(nn.Module):
-    def __init__(self):
+    def __init__(self, future_days_count):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(5, 32),
+            nn.Linear(5 * 5, 64),  # 5 days * 5 features
             nn.ReLU(),
-            nn.Linear(32, 1),
-            nn.Sigmoid()  # Sigmoid for binary output
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, future_days_count),  # Output for each prediction task
+            nn.Sigmoid()
         )
+
     def forward(self, x):
+        x = x.view(x.size(0), -1)  # Flatten
         return self.model(x)
 
-# Model, loss function, optimizer
-model = PricePredictor()
-loss_fn = nn.BCELoss()  # Binary Cross-Entropy loss for classification
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+model = PricePredictor(future_days_count=len(future_days))
 
-# Training loop with loss tracking
+# ========= Training Setup ==========
+loss_fn = nn.BCELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 losses = []
 
+# ========= Training Loop ==========
 for epoch in range(20):
     epoch_loss = 0
     for X_batch, y_batch in dataloader:
-        preds = model(X_batch).squeeze()  # Output is already between 0 and 1 due to Sigmoid in the final layer
+        preds = model(X_batch)
 
-        # Debugging: Print first 10 predictions to check if they are between 0 and 1
-        print(preds[:10])
-
-        # Check for NaN or Inf values in preds
         if torch.isnan(preds).sum() > 0 or torch.isinf(preds).sum() > 0:
             print("Error: NaN or Inf values found in predictions")
             continue
 
-        print(f"y_batch shape: {y_batch.shape}")
-        loss = loss_fn(preds, y_batch.squeeze())  # preds are already in the correct range
+        loss = loss_fn(preds, y_batch)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -94,18 +100,20 @@ for epoch in range(20):
     losses.append(epoch_loss)
     print(f"Epoch {epoch + 1}: Loss = {epoch_loss:.4f}")
 
-# Plot loss over epochs
+# ========= Plot Training Loss ==========
 plt.plot(range(1, 21), losses)
 plt.xlabel('Epoch')
 plt.ylabel('Loss')
 plt.title('Loss Over Epochs')
 plt.show()
 
-# After predictions
+# ========= Final Predictions ==========
 with torch.no_grad():
-    preds = model(X).squeeze()
+    preds = model(X).numpy()
 
-# Convert predictions to binary (0 or 1)
-predicted_classes = (preds > 0.5).int().numpy()
+predicted_classes = (preds > 0.5).astype(int)
 
-
+# Print example: movements for day d, d+3, and d+5
+print("Predictions (first 5 samples):")
+for i in range(5):
+    print(f"Sample {i+1}: D={predicted_classes[i][0]}, D+3={predicted_classes[i][1]}, D+5={predicted_classes[i][2]}")
