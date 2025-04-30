@@ -95,7 +95,7 @@ class PricePredictor(nn.Module):
         input_size = 5 * len(features) + 5 * 768  # stock + tweet
         self.fc1 = nn.Linear(input_size, 128)
         self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, 3)
+        self.fc3 = nn.Linear(64, 3)  # Predicting 3 outputs: d, d+1, d+3
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
@@ -106,7 +106,6 @@ model = PricePredictor()
 loss_fn = nn.BCEWithLogitsLoss()
 optimizer = optim.Adam(model.parameters(), lr=1e-4)  # lowered learning rate
 
-
 # Train the model
 train_losses = []
 
@@ -115,7 +114,7 @@ for epoch in range(20):
     total_loss = 0
     for X_batch, y_batch in dataloader:
         optimizer.zero_grad()
-        preds = model(X_batch).squeeze()
+        preds = model(X_batch)
         loss = loss_fn(preds, y_batch)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)  # prevent exploding gradients
@@ -124,7 +123,6 @@ for epoch in range(20):
     avg_loss = total_loss / len(dataloader)
     train_losses.append(avg_loss)
     print(f"Epoch {epoch+1}: Loss = {avg_loss:.4f}")
-
 
 # Plot training loss
 plt.plot(range(1, 21), train_losses, label='Training Loss')
